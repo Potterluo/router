@@ -288,7 +288,9 @@ impl VllmPDRouter {
             KvConnector::MoriIO => {
                 if matches!(self.moriio_transfer_mode(), Some(MoriIOTransferMode::Write)) {
                     // WRITE mode: build decode params directly; decode does not need the prefill response.
-                    let prefill_base = prefill_url.trim_start_matches("http://").trim_start_matches("https://");
+                    let prefill_base = prefill_url
+                        .trim_start_matches("http://")
+                        .trim_start_matches("https://");
                     let (tp_size, _) = self
                         .service_registry
                         .get_tp_dp_size(prefill_base, ServiceType::Prefill);
@@ -2551,7 +2553,11 @@ mod tests {
 
     // --- MoRI-IO WRITE mode parameter tests ---
 
-    fn moriio_write_prefill_params(transfer_id: Option<&str>, dp_size: usize, tp_size: usize) -> Value {
+    fn moriio_write_prefill_params(
+        transfer_id: Option<&str>,
+        dp_size: usize,
+        tp_size: usize,
+    ) -> Value {
         // Mirror the WRITE mode branch in build_prefill_kv_transfer_params.
         json!({
             "do_remote_decode": true,

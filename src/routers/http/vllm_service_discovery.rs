@@ -100,7 +100,12 @@ fn parse_registration(
     remote_address: &[u8],
     kv_connector: KvConnector,
     stored_transfer_mode: Option<MoriIOTransferMode>,
-) -> Option<(ServiceRegistration, Option<MoriIOTransferMode>, usize, usize)> {
+) -> Option<(
+    ServiceRegistration,
+    Option<MoriIOTransferMode>,
+    usize,
+    usize,
+)> {
     if matches!(kv_connector, KvConnector::MoriIO) {
         let reg: MoriIOServiceRegistration = match rmp_serde::from_slice(message_data) {
             Ok(r) => r,
