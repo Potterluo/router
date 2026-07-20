@@ -20,6 +20,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
@@ -54,6 +55,8 @@ pub struct VllmPDRouter {
     profiling_tasks: Arc<Mutex<HashMap<String, tokio::task::AbortHandle>>>,
     /// Intra-node data parallel size for DP-aware routing (automatically enabled when > 1)
     intra_node_data_parallel_size: usize,
+    /// Round-robin counter for prefill DP rank selection
+    prefill_dp_round_robin: Arc<AtomicUsize>,
     /// KV connector type
     kv_connector: KvConnector,
     /// Mooncake bootstrap info: prefill base_url -> MooncakePrefillInfo
@@ -791,10 +794,18 @@ impl VllmPDRouter {
         // Generate a connector-specific transfer_id (None for NIXL)
         let transfer_id = self.generate_transfer_id();
 
-        let (prefill_base_http, prefill_dp_rank) =
+        let (prefill_base_http, mut prefill_dp_rank) =
             extract_base_http_and_dp_rank(prefill_http, self.intra_node_data_parallel_size);
         let (decode_base_http, decode_dp_rank) =
             extract_base_http_and_dp_rank(decode_http, self.intra_node_data_parallel_size);
+
+        if self.intra_node_data_parallel_size > 1 && prefill_dp_rank.is_none() {
+            let rank = self
+                .prefill_dp_round_robin
+                .fetch_add(1, Ordering::Relaxed)
+                % self.intra_node_data_parallel_size;
+            prefill_dp_rank = Some(rank);
+        }
 
         // Add kv_transfer_params for KV connector support at top level
         prefill_request["kv_transfer_params"] =
@@ -1593,6 +1604,7 @@ impl VllmPDRouter {
                 profile_timeout_secs: ctx.router_config.profile_timeout_secs,
                 profiling_tasks: Arc::new(Mutex::new(HashMap::new())),
                 intra_node_data_parallel_size: ctx.router_config.intra_node_data_parallel_size,
+                prefill_dp_round_robin: Arc::new(AtomicUsize::new(0)),
                 kv_connector,
                 mooncake_prefill_info: Arc::new(Mutex::new(HashMap::new())),
             })
@@ -1681,6 +1693,7 @@ impl VllmPDRouter {
                 profile_timeout_secs: ctx.router_config.profile_timeout_secs,
                 profiling_tasks: Arc::new(Mutex::new(HashMap::new())),
                 intra_node_data_parallel_size: ctx.router_config.intra_node_data_parallel_size,
+                prefill_dp_round_robin: Arc::new(AtomicUsize::new(0)),
                 kv_connector,
                 mooncake_prefill_info,
             })
