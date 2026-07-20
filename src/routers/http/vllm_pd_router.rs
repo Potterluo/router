@@ -203,6 +203,7 @@ impl VllmPDRouter {
         &self,
         transfer_id: Option<&str>,
         decode_base: Option<&str>,
+        decode_dp_rank: Option<usize>,
     ) -> Result<Value, String> {
         match self.kv_connector {
             KvConnector::Mooncake => Ok(json!({
@@ -226,7 +227,7 @@ impl VllmPDRouter {
                                 .0
                         })
                         .unwrap_or(1);
-                    Ok(json!({
+                    let mut params = json!({
                         "do_remote_decode": true,
                         "do_remote_prefill": false,
                         "remote_engine_id": serde_json::Value::Null,
@@ -234,7 +235,11 @@ impl VllmPDRouter {
                         "remote_dp_size": self.intra_node_data_parallel_size,
                         "remote_tp_size": remote_tp_size,
                         "transfer_id": transfer_id.unwrap_or(""),
-                    }))
+                    });
+                    if self.intra_node_data_parallel_size > 1 {
+                        params["remote_dp_rank"] = json!(decode_dp_rank.unwrap_or(0));
+                    }
+                    Ok(params)
                 } else {
                     // READ mode: prefill waits for decode to pull blocks.
                     Ok(json!({
@@ -793,7 +798,7 @@ impl VllmPDRouter {
 
         // Add kv_transfer_params for KV connector support at top level
         prefill_request["kv_transfer_params"] =
-            self.build_prefill_kv_transfer_params(transfer_id.as_deref(), Some(&decode_base_http))?;
+            self.build_prefill_kv_transfer_params(transfer_id.as_deref(), Some(&decode_base_http), prefill_dp_rank)?;
 
         debug!(
             "Added kv_transfer_params to prefill request for {:?} connector",
@@ -938,10 +943,14 @@ impl VllmPDRouter {
             .header("Content-Type", "application/json")
             .header("X-Request-Id", &request_id); // Same P2P coordination metadata in header
 
-        // Add X-data-parallel-rank header using shared utilities
+        let effective_decode_dp_rank = if decode_dp_rank.is_none() && self.intra_node_data_parallel_size > 1 {
+            prefill_dp_rank
+        } else {
+            decode_dp_rank
+        };
         decode_request_builder =
-            dp_utils::add_dp_rank_header(decode_request_builder, decode_dp_rank);
-        if let Some(rank) = decode_dp_rank {
+            dp_utils::add_dp_rank_header(decode_request_builder, effective_decode_dp_rank);
+        if let Some(rank) = effective_decode_dp_rank {
             debug!(
                 "Added X-data-parallel-rank={} header to decode request",
                 rank
@@ -1171,7 +1180,7 @@ impl VllmPDRouter {
         // Add kv_transfer_params for KV connector support at top level
         let decode_base_url = decode_worker.base_url().to_string();
         prefill_request["kv_transfer_params"] = self
-            .build_prefill_kv_transfer_params(transfer_id.as_deref(), Some(&decode_base_url))
+            .build_prefill_kv_transfer_params(transfer_id.as_deref(), Some(&decode_base_url), decode_worker.dp_rank())
             .map_err(|reason| PDRouterError::InvalidConfiguration { reason })?;
 
         debug!(
