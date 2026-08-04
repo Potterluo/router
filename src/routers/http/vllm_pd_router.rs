@@ -800,16 +800,17 @@ impl VllmPDRouter {
             extract_base_http_and_dp_rank(decode_http, self.intra_node_data_parallel_size);
 
         if self.intra_node_data_parallel_size > 1 && prefill_dp_rank.is_none() {
-            let rank = self
-                .prefill_dp_round_robin
-                .fetch_add(1, Ordering::Relaxed)
+            let rank = self.prefill_dp_round_robin.fetch_add(1, Ordering::Relaxed)
                 % self.intra_node_data_parallel_size;
             prefill_dp_rank = Some(rank);
         }
 
         // Add kv_transfer_params for KV connector support at top level
-        prefill_request["kv_transfer_params"] =
-            self.build_prefill_kv_transfer_params(transfer_id.as_deref(), Some(&decode_base_http), prefill_dp_rank)?;
+        prefill_request["kv_transfer_params"] = self.build_prefill_kv_transfer_params(
+            transfer_id.as_deref(),
+            Some(&decode_base_http),
+            prefill_dp_rank,
+        )?;
 
         debug!(
             "Added kv_transfer_params to prefill request for {:?} connector",
@@ -954,11 +955,12 @@ impl VllmPDRouter {
             .header("Content-Type", "application/json")
             .header("X-Request-Id", &request_id); // Same P2P coordination metadata in header
 
-        let effective_decode_dp_rank = if decode_dp_rank.is_none() && self.intra_node_data_parallel_size > 1 {
-            prefill_dp_rank
-        } else {
-            decode_dp_rank
-        };
+        let effective_decode_dp_rank =
+            if decode_dp_rank.is_none() && self.intra_node_data_parallel_size > 1 {
+                prefill_dp_rank
+            } else {
+                decode_dp_rank
+            };
         decode_request_builder =
             dp_utils::add_dp_rank_header(decode_request_builder, effective_decode_dp_rank);
         if let Some(rank) = effective_decode_dp_rank {
@@ -1191,7 +1193,11 @@ impl VllmPDRouter {
         // Add kv_transfer_params for KV connector support at top level
         let decode_base_url = decode_worker.base_url().to_string();
         prefill_request["kv_transfer_params"] = self
-            .build_prefill_kv_transfer_params(transfer_id.as_deref(), Some(&decode_base_url), decode_worker.dp_rank())
+            .build_prefill_kv_transfer_params(
+                transfer_id.as_deref(),
+                Some(&decode_base_url),
+                decode_worker.dp_rank(),
+            )
             .map_err(|reason| PDRouterError::InvalidConfiguration { reason })?;
 
         debug!(
