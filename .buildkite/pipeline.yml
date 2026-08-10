@@ -195,6 +195,9 @@ steps:
   # ============================================================================
   - label: ":satellite: P/D Disaggregation Test (4 GPUs)"
     key: "pd-disagg-test"
+    # ROCm-only scheduled builds use the dedicated MI300X queue and should not
+    # wait for an unrelated NVIDIA worker before the build can finish.
+    if: build.env("ROCM_ONLY") != "1"
     timeout_in_minutes: 60
     retry:
       automatic:
