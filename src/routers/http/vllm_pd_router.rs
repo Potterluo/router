@@ -67,6 +67,13 @@ pub struct VllmPDRouter {
 /// Must match `MoRIIOConstants.TRANSFER_PREFIX` in the vLLM Python connector.
 const MORIIO_TRANSFER_PREFIX: &str = "tx";
 
+/// Discovery-backed P/D routing is ready only after both worker types register.
+/// Without this guard, `PdRouterBase::health` sees the unused static registry and
+/// reports success before a discovered prefill/decode pair can serve requests.
+fn discovery_is_ready(prefill_count: usize, decode_count: usize) -> bool {
+    prefill_count > 0 && decode_count > 0
+}
+
 /// Strip the DP-rank suffix from a worker's HTTP address and return the base address
 /// plus the parsed rank. Returns `(original, None)` when DP is disabled.
 fn extract_base_http_and_dp_rank(
@@ -1750,6 +1757,21 @@ impl RouterTrait for VllmPDRouter {
     }
 
     async fn health(&self, req: Request<Body>) -> Response {
+        if self.use_discovery {
+            let (prefill_count, decode_count) = self.service_registry.get_instance_counts();
+            if !discovery_is_ready(prefill_count, decode_count) {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    format!(
+                        "Waiting for discovered workers: {prefill_count} prefill, {decode_count} decode"
+                    ),
+                )
+                    .into_response();
+            }
+
+            return (StatusCode::OK, "OK").into_response();
+        }
+
         self.pd_router.health(req).await
     }
 
@@ -2397,6 +2419,15 @@ impl WorkerManagement for VllmPDRouter {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_discovery_health_requires_prefill_and_decode_workers() {
+        assert!(!discovery_is_ready(0, 0));
+        assert!(!discovery_is_ready(1, 0));
+        assert!(!discovery_is_ready(0, 1));
+        assert!(discovery_is_ready(1, 1));
+        assert!(discovery_is_ready(2, 3));
+    }
 
     // --- OpenAI-style endpoint tests (chat/completions, completions) ---
 
