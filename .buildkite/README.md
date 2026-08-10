@@ -79,6 +79,10 @@ RDMA matrix runs for scheduled builds with `NIGHTLY=1`, or trusted manual/API
 builds with `RUN_ROCM_RDMA=1`. Group-level filtering prevents Docker plugin
 hooks from running for untrusted fork pull requests.
 
+ROCm-only scheduled builds should set both `NIGHTLY=1` and `ROCM_ONLY=1`.
+`ROCM_ONLY=1` skips the unrelated NVIDIA four-GPU P/D step while retaining the
+CPU build that supplies the router artifact to both ROCm matrices.
+
 Both matrices use a digest-pinned ROCm vLLM image and run health, sanity, and
 500-example GSM8K accuracy checks. The RDMA job is coordinator-owned and
 controls the second host through the strict `vllm-router-rocm-worker` SSH alias.
