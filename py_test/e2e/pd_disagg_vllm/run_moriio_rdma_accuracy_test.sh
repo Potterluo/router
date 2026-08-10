@@ -233,7 +233,7 @@ COMMON_DOCKER_ARGS=(
   -e MORI_DISABLE_AUTO_XGMI=1
   -e GLOO_SOCKET_IFNAME=eth2
   # The upstream image defaults this to 1 for older firmware. Retaining scratch
-  # allocations indefinitely can exhaust HSA resources under concurrent decode.
+  # allocations indefinitely can exhaust runtime resources under concurrent decode.
   -e HSA_NO_SCRATCH_RECLAIM="${HSA_NO_SCRATCH_RECLAIM}"
   -e VLLM_ROCM_USE_AITER=1
   -e VLLM_LOGGING_LEVEL=INFO
