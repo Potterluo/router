@@ -90,7 +90,8 @@ async fn test_openai_router_creation() {
 /// Test health endpoints
 #[tokio::test]
 async fn test_openai_router_health() {
-    let router = OpenAIRouter::new("https://api.openai.com".to_string(), None)
+    let mock_server = MockOpenAIServer::new().await;
+    let router = OpenAIRouter::new(mock_server.base_url(), None)
         .await
         .unwrap();
 
