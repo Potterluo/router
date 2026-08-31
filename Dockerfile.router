@@ -26,8 +26,6 @@ RUN apt-get update && apt upgrade -y && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --upgrade pip
-
 # Create app directory
 WORKDIR /app
 
@@ -43,7 +41,14 @@ COPY pyproject.toml ./
 COPY README.md ./
 
 # Install Python dependencies if using Python launcher
-RUN pip install setuptools-rust wheel build requests
+RUN pip install --upgrade \
+    pip \
+    "setuptools>=83.0.0" \
+    "msgpack>=1.2.1" \
+    setuptools-rust \
+    wheel \
+    build \
+    requests
 
 # Expose default router port
 EXPOSE 8080
