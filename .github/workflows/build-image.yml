@@ -80,14 +80,18 @@ jobs:
 
       - name: Compute image tags
         id: tags
+        # pass the dispatch input through an env var, never interpolate it into the
+        # script (script-injection hardening: https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-an-intermediate-environment-variable)
+        env:
+          IMAGE_TAG: ${{ github.event.inputs.image_tag }}
         run: |
           SHORT_SHA=${GITHUB_SHA:0:7}
           echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
           IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"   # registry names must be lowercase
           TAGS="${IMAGE}:sha-${SHORT_SHA}-${{ matrix.arch }}"
-          CUSTOM="${{ github.event.inputs.image_tag }}"
-          if [ -n "$CUSTOM" ]; then
-            CUSTOM_CLEAN=$(echo "$CUSTOM" | tr -cd 'a-zA-Z0-9._-')
+          # sanitize and cap so "<custom>-arm64" stays within Docker's 128-char tag limit
+          CUSTOM_CLEAN=$(printf '%s' "$IMAGE_TAG" | tr -cd 'a-zA-Z0-9._-' | cut -c1-120)
+          if [ -n "$CUSTOM_CLEAN" ]; then
             TAGS="${TAGS},${IMAGE}:${CUSTOM_CLEAN}-${{ matrix.arch }}"
           fi
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
@@ -120,6 +124,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push multi-arch manifest
+        env:
+          IMAGE_TAG: ${{ github.event.inputs.image_tag }}
         run: |
           set -euo pipefail
           SHORT_SHA=${GITHUB_SHA:0:7}
@@ -131,8 +137,9 @@ jobs:
           echo "Combining: ${SOURCES[*]}"
           docker buildx imagetools create -t "${IMAGE}:latest" "${SOURCES[@]}"
           docker buildx imagetools create -t "${IMAGE}:sha-${SHORT_SHA}" "${SOURCES[@]}"
-          CUSTOM="${{ github.event.inputs.image_tag }}"
-          if [ -n "$CUSTOM" ]; then
-            CUSTOM_CLEAN=$(echo "$CUSTOM" | tr -cd 'a-zA-Z0-9._-')
+          # same sanitize+cap as the build step so the custom tag matches
+          # the per-arch custom tags it was built with
+          CUSTOM_CLEAN=$(printf '%s' "$IMAGE_TAG" | tr -cd 'a-zA-Z0-9._-' | cut -c1-120)
+          if [ -n "$CUSTOM_CLEAN" ]; then
             docker buildx imagetools create -t "${IMAGE}:${CUSTOM_CLEAN}" "${SOURCES[@]}"
           fi
