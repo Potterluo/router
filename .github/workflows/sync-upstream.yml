@@ -1,0 +1,70 @@
+# Keep the fork in sync with upstream (vllm-project/router) and rebuild images afterwards.
+#
+# Triggers:
+#   - schedule (daily 02:30 UTC)
+#   - workflow_dispatch (manual "Sync now" button in Actions)
+#
+# Behavior:
+#   1. merge upstream/main into this fork's main
+#   2. push the merge commit back to the fork
+#   3. (when changed) dispatch the build-image workflow, so fresh x86+arm images
+#      are produced right after every sync. The push in step 2 would also trigger
+#      build-image on its own (on: push), but an explicit dispatch makes the
+#      dependency obvious and lets you disable it via the auto_build input.
+
+name: sync-upstream
+
+on:
+  schedule:
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+    inputs:
+      auto_build:
+        description: 'Trigger the image build after syncing (default: true)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge upstream changes
+        id: sync
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream https://github.com/vllm-project/router.git
+          git fetch upstream main
+          BEFORE=$(git rev-parse HEAD)
+          git merge --no-edit -m 'chore: sync with upstream main' upstream/main
+          AFTER=$(git rev-parse HEAD)
+          if [ "$BEFORE" = "$AFTER" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push synced main
+        run: git push origin main
+
+      - name: Trigger image build
+        if: ${{ steps.sync.outputs.changed == 'true' && (github.event_name == 'schedule' || github.event.inputs.auto_build != 'false') }}
+        run: gh workflow run build-image.yml --ref main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
