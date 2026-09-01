@@ -1,0 +1,138 @@
+# Build and publish the vllm-router image (multi-arch: linux/amd64 + linux/arm64)
+#
+# Triggers:
+#   - push to main        -> build happens automatically
+#   - workflow_dispatch   -> manual build, optional extra image tag
+#
+# Output (GHCR, image name defaults to ghcr.io/<owner>/<repo>):
+#   <image>:latest
+#   <image>:sha-<short-sha>                    (multi-arch manifest)
+#   <image>:<custom-tag>                       (manual dispatch only, optional)
+#   <image>:sha-<short-sha>-amd64|-arm64       (per-arch, kept for debugging)
+#
+# arm64 is built natively on GitHub's ARM runner (ubuntu-24.04-arm).
+# If native ARM runners are unavailable (e.g. private repos), change the arm64
+# runner in the matrix below to "ubuntu-latest": the QEMU step will then build
+# arm64 via emulation instead (slower, but no ARM runner needed).
+
+name: build-image
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Extra tag to publish in addition to latest / sha-<commit> (e.g. v0.1.15)'
+        required: false
+        type: string
+        default: ''
+      build_arm64:
+        description: 'Also build the linux/arm64 image'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up QEMU (arm64)
+        if: ${{ matrix.arch == 'arm64' && github.event.inputs.build_arm64 != 'false' }}
+        uses: docker/setup-qemu-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          SHORT_SHA=${GITHUB_SHA:0:7}
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"   # registry names must be lowercase
+          TAGS="${IMAGE}:sha-${SHORT_SHA}-${{ matrix.arch }}"
+          CUSTOM="${{ github.event.inputs.image_tag }}"
+          if [ -n "$CUSTOM" ]; then
+            CUSTOM_CLEAN=$(echo "$CUSTOM" | tr -cd 'a-zA-Z0-9._-')
+            TAGS="${TAGS},${IMAGE}:${CUSTOM_CLEAN}-${{ matrix.arch }}"
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "Pushing: ${TAGS}"
+
+      - name: Build and push
+        if: ${{ !(matrix.arch == 'arm64' && github.event.inputs.build_arm64 == 'false') }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.router
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+
+  manifest:
+    name: publish multi-arch manifest
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ needs.build.result == 'success' }}
+    timeout-minutes: 15
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-arch manifest
+        run: |
+          set -euo pipefail
+          SHORT_SHA=${GITHUB_SHA:0:7}
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"   # registry names must be lowercase
+          SOURCES=("${IMAGE}:sha-${SHORT_SHA}-amd64")
+          if docker buildx imagetools inspect "${IMAGE}:sha-${SHORT_SHA}-arm64" >/dev/null 2>&1; then
+            SOURCES+=("${IMAGE}:sha-${SHORT_SHA}-arm64")
+          fi
+          echo "Combining: ${SOURCES[*]}"
+          docker buildx imagetools create -t "${IMAGE}:latest" "${SOURCES[@]}"
+          docker buildx imagetools create -t "${IMAGE}:sha-${SHORT_SHA}" "${SOURCES[@]}"
+          CUSTOM="${{ github.event.inputs.image_tag }}"
+          if [ -n "$CUSTOM" ]; then
+            CUSTOM_CLEAN=$(echo "$CUSTOM" | tr -cd 'a-zA-Z0-9._-')
+            docker buildx imagetools create -t "${IMAGE}:${CUSTOM_CLEAN}" "${SOURCES[@]}"
+          fi
