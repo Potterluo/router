@@ -83,11 +83,12 @@ jobs:
         run: |
           SHORT_SHA=${GITHUB_SHA:0:7}
           echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
-          TAGS="ghcr.io/${GITHUB_REPOSITORY}:sha-${SHORT_SHA}-${{ matrix.arch }}"
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"   # registry names must be lowercase
+          TAGS="${IMAGE}:sha-${SHORT_SHA}-${{ matrix.arch }}"
           CUSTOM="${{ github.event.inputs.image_tag }}"
           if [ -n "$CUSTOM" ]; then
             CUSTOM_CLEAN=$(echo "$CUSTOM" | tr -cd 'a-zA-Z0-9._-')
-            TAGS="${TAGS},ghcr.io/${GITHUB_REPOSITORY}:${CUSTOM_CLEAN}-${{ matrix.arch }}"
+            TAGS="${TAGS},${IMAGE}:${CUSTOM_CLEAN}-${{ matrix.arch }}"
           fi
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
           echo "Pushing: ${TAGS}"
@@ -122,7 +123,7 @@ jobs:
         run: |
           set -euo pipefail
           SHORT_SHA=${GITHUB_SHA:0:7}
-          IMAGE="ghcr.io/${GITHUB_REPOSITORY}"
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"   # registry names must be lowercase
           SOURCES=("${IMAGE}:sha-${SHORT_SHA}-amd64")
           if docker buildx imagetools inspect "${IMAGE}:sha-${SHORT_SHA}-arm64" >/dev/null 2>&1; then
             SOURCES+=("${IMAGE}:sha-${SHORT_SHA}-arm64")
